@@ -1,11 +1,21 @@
+
+
 # 🎤 AI Mock Interview Coach
+
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)
+![Gemini](https://img.shields.io/badge/Google_Gemini-8E75B2?style=for-the-badge&logo=googlegemini&logoColor=white)
+
+[![Live Demo](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://ai-interview-coach-8uu8yxrozsx2hvvcmkh2nn.streamlit.app/)
 
 An AI-powered mock interview simulator built with **Streamlit** + **Google Gemini**.
 Paste a job description (and optionally your resume), get tailored technical +
 behavioral interview questions, submit typed answers, and receive scored,
 actionable feedback plus a final readiness report.
 
-## Why this project
+**🔗 Live Demo:** [ai-interview-coach-8uu8yxrozsx2hvvcmkh2nn.streamlit.app](https://ai-interview-coach-8uu8yxrozsx2hvvcmkh2nn.streamlit.app/)
+
+## Why this project 
 
 - Demonstrates **prompt engineering** (structured JSON output from an LLM),
   **agentic multi-step flow** (generate → answer → evaluate → aggregate),
@@ -50,13 +60,7 @@ ai-interview-coach/
 4. Paste your Gemini API key in the sidebar, enter a job title + job description,
    optionally paste your resume, and click **Generate interview**.
 
-## Deploying
 
-1. Push this folder to a GitHub repo.
-2. Go to [share.streamlit.io](https://share.streamlit.io), connect the repo,
-   set `app.py` as the entry point.
-3. Users (or you, during an interview demo) enter their own Gemini key in the
-   sidebar — no secrets need to be stored on the server.
 
 ## How it works (architecture)
 
@@ -79,3 +83,11 @@ ai-interview-coach/
 ## Tech stack
 
 `Python` · `Streamlit` · `Google Gemini API` · `Prompt Engineering` · `JSON parsing`
+
+---
+
+## 👩‍💻 Author
+
+** (Marikanti Pallavi Reddy)**
+B.E. Artificial Intelligence & Machine Learning
+Chaitanya Bharathi Institute of Technology, Hyderabad
