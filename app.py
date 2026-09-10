@@ -11,7 +11,8 @@ Run:
 """
 
 import streamlit as st
-from utils import generate_questions, evaluate_answer, build_final_report
+from streamlit.errors import StreamlitSecretNotFoundError
+from utils import GeminiError, ResponseParseError, build_final_report, evaluate_answer, generate_questions, get_api_key
 
 st.set_page_config(page_title="AI Mock Interview Coach", page_icon="🎤", layout="centered")
 
@@ -37,8 +38,15 @@ def reset_app():
 # ---------------------------------------------------------------- sidebar
 with st.sidebar:
     st.header("Setup")
-    api_key = st.text_input("Gemini API key", type="password", help="Get one free at aistudio.google.com/apikey")
-    st.caption("Your key is used only for this session and never stored.")
+    try:
+        configured_secrets = st.secrets
+    except StreamlitSecretNotFoundError:
+        configured_secrets = None
+    api_key = get_api_key(configured_secrets)
+    if api_key:
+        st.success("Gemini API key loaded from configuration.")
+    else:
+        st.warning("Set GEMINI_API_KEY in your environment or Streamlit secrets.")
     st.divider()
     if st.button("🔄 Restart session"):
         reset_app()
@@ -78,7 +86,7 @@ if st.session_state.stage == "setup":
                     st.session_state.current_idx = 0
                     st.session_state.stage = "interview"
                     st.rerun()
-                except Exception as e:
+                except (GeminiError, ResponseParseError, ValueError) as e:
                     st.error(f"Couldn't generate questions: {e}")
 
 # ---------------------------------------------------------------- STAGE 2: interview
@@ -123,7 +131,7 @@ elif st.session_state.stage == "interview":
                     else:
                         st.session_state.stage = "report"
                     st.rerun()
-                except Exception as e:
+                except (GeminiError, ResponseParseError, ValueError) as e:
                     st.error(f"Couldn't evaluate answer: {e}")
 
 # ---------------------------------------------------------------- STAGE 3: report
