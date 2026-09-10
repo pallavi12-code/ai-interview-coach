@@ -7,7 +7,9 @@ can be swapped in one place.
 """
 
 import json
-import re
+import os
+from typing import Any
+
 import requests
 
 GEMINI_MODEL = "gemini-2.0-flash"
@@ -17,30 +19,114 @@ GEMINI_URL = (
 )
 
 
+class GeminiError(RuntimeError):
+    """Raised when Gemini cannot be reached or returns an unusable response."""
+
+
+class ResponseParseError(ValueError):
+    """Raised when a model response is not valid JSON in the expected shape."""
+
+
+def get_api_key(secrets: Any = None) -> str:
+    """Read the Gemini key from the environment, then an optional secrets mapping."""
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if api_key:
+        return api_key
+    if secrets is not None:
+        secret_key = str(secrets.get("GEMINI_API_KEY", "")).strip()
+        if secret_key:
+            return secret_key
+    return ""
+
+
 def call_gemini(api_key: str, prompt: str, temperature: float = 0.7) -> str:
     """Send a single-turn prompt to Gemini and return the raw text response."""
+    if not api_key.strip():
+        raise GeminiError("Gemini API key is not configured.")
+    if not prompt.strip():
+        raise ValueError("Gemini prompt cannot be empty.")
+
     headers = {"Content-Type": "application/json"}
     params = {"key": api_key}
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": temperature, "maxOutputTokens": 1024},
     }
-    resp = requests.post(GEMINI_URL, headers=headers, params=params, json=body, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
+    try:
+        resp = requests.post(
+            GEMINI_URL, headers=headers, params=params, json=body, timeout=30
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.RequestException as exc:
+        raise GeminiError("Gemini request failed. Check the API key and network connection.") from exc
+    except ValueError as exc:
+        raise GeminiError("Gemini returned an invalid response.") from exc
+
     try:
         return data["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError):
-        raise RuntimeError(f"Unexpected Gemini response: {data}")
+    except (KeyError, IndexError, TypeError) as exc:
+        raise GeminiError("Gemini returned no usable text response.") from exc
 
 
-def _extract_json(text: str):
-    """Pull the first JSON object/array out of a model response, stripping ```json fences."""
-    cleaned = re.sub(r"```json|```", "", text).strip()
-    match = re.search(r"(\[.*\]|\{.*\})", cleaned, re.DOTALL)
-    if not match:
-        raise ValueError(f"No JSON found in model output: {text[:200]}")
-    return json.loads(match.group(1))
+def _extract_json(text: str) -> Any:
+    """Extract the first decodable JSON object or array from model output.
+
+    Gemini sometimes wraps valid JSON in Markdown or short explanatory text. A
+    JSON decoder is used instead of a greedy regex so nested objects and braces
+    inside quoted strings are handled correctly.
+    """
+    if not isinstance(text, str) or not text.strip():
+        raise ResponseParseError("Model response was empty.")
+
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(text):
+        if character not in "[{":
+            continue
+        try:
+            value, _ = decoder.raw_decode(text[index:])
+            return value
+        except json.JSONDecodeError:
+            continue
+    raise ResponseParseError("Model response did not contain valid JSON.")
+
+
+def _validate_questions(value: Any, expected_count: int) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or len(value) != expected_count:
+        raise ResponseParseError(f"Expected exactly {expected_count} interview questions.")
+
+    questions = []
+    for index, question in enumerate(value, start=1):
+        if not isinstance(question, dict):
+            raise ResponseParseError(f"Question {index} is not an object.")
+        question_type = question.get("type")
+        text = question.get("question")
+        if question_type not in {"technical", "behavioral"} or not isinstance(text, str) or not text.strip():
+            raise ResponseParseError(f"Question {index} has an invalid type or text.")
+        questions.append(
+            {"id": question.get("id", index), "type": question_type, "question": text.strip()}
+        )
+    return questions
+
+
+def _validate_evaluation(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ResponseParseError("Evaluation response must be a JSON object.")
+    required = ("relevance_score", "clarity_score", "depth_score", "strengths", "improvements", "model_answer")
+    if any(key not in value for key in required):
+        raise ResponseParseError("Evaluation response is missing required fields.")
+
+    result = dict(value)
+    for key in ("relevance_score", "clarity_score", "depth_score"):
+        try:
+            score = int(result[key])
+        except (TypeError, ValueError) as exc:
+            raise ResponseParseError(f"{key} must be an integer from 0 to 10.") from exc
+        result[key] = max(0, min(10, score))
+    for key in ("strengths", "improvements", "model_answer"):
+        if not isinstance(result[key], str):
+            raise ResponseParseError(f"{key} must be text.")
+    return result
 
 
 def generate_questions(api_key: str, job_description: str, resume_text: str, num_questions: int = 6):
@@ -64,8 +150,10 @@ Respond with ONLY a JSON array, no extra text, in this exact format:
   {{"id": 2, "type": "behavioral", "question": "..."}}
 ]
 """
+    if not isinstance(num_questions, int) or not 3 <= num_questions <= 10:
+        raise ValueError("num_questions must be between 3 and 10.")
     raw = call_gemini(api_key, prompt, temperature=0.8)
-    return _extract_json(raw)
+    return _validate_questions(_extract_json(raw), num_questions)
 
 
 def evaluate_answer(api_key: str, question: str, question_type: str, answer: str, job_description: str):
@@ -96,10 +184,7 @@ If the candidate's answer is empty or "I don't know" style, score honestly low
 and still provide a useful model_answer.
 """
     raw = call_gemini(api_key, prompt, temperature=0.4)
-    result = _extract_json(raw)
-    for key in ("relevance_score", "clarity_score", "depth_score"):
-        result[key] = max(0, min(10, int(result.get(key, 0))))
-    return result
+    return _validate_evaluation(_extract_json(raw))
 
 
 def build_final_report(evaluations: list, job_title: str):
@@ -114,9 +199,12 @@ def build_final_report(evaluations: list, job_title: str):
         }
 
     n = len(evaluations)
-    avg_rel = sum(e["relevance_score"] for e in evaluations) / n
-    avg_clarity = sum(e["clarity_score"] for e in evaluations) / n
-    avg_depth = sum(e["depth_score"] for e in evaluations) / n
+    try:
+        avg_rel = sum(float(e["relevance_score"]) for e in evaluations) / n
+        avg_clarity = sum(float(e["clarity_score"]) for e in evaluations) / n
+        avg_depth = sum(float(e["depth_score"]) for e in evaluations) / n
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Evaluations must contain numeric score fields.") from exc
     overall = round((avg_rel + avg_clarity + avg_depth) / 3, 1)
 
     if overall >= 8:
